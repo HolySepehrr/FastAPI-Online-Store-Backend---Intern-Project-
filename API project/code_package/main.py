@@ -2,14 +2,21 @@ from fastapi import FastAPI, Path, HTTPException, Query
 from pydantic import BaseModel, Field
 import datetime
 
+
+# متغیرهای سراسری را در یک ماژول یا فایل جداگانه تعریف می‌کنیم
+# تا توسط تست‌ها قابل اشتراک و ریست شدن باشند.
+class GlobalDB:
+    def __init__(self):
+        self.items_db = {}
+        self.cart_db = {}
+        self.item_id_counter = 0
+        self.purchases_db = {}
+        self.purchase_id_counter = 0
+
+
+db = GlobalDB()
+
 app = FastAPI()
-
-items_db = {}
-cart_db = {}
-item_id_counter = 0
-
-purchases_db = {}
-purchase_id_counter = 0
 
 
 class Item(BaseModel):
@@ -20,6 +27,15 @@ class Item(BaseModel):
     stock: int = Field(ge=0)
 
 
+# یک مدل جدید برای به‌روزرسانی آیتم‌ها با فیلدهای اختیاری
+class ItemUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    price: float | None = Field(None, gt=0)
+    category: str | None = None
+    stock: int | None = Field(None, ge=0)
+
+
 class CartItem(BaseModel):
     item_id: int
     quantity: int = Field(gt=0)
@@ -27,32 +43,31 @@ class CartItem(BaseModel):
 
 @app.post("/items", tags=[" Items Management"])
 def add_item_endpoint(item: Item):
-    global item_id_counter
-    item_id_counter += 1
+    db.item_id_counter += 1
     item_with_id = item.model_dump()
-    item_with_id["id"] = item_id_counter
-    items_db[item_id_counter] = item_with_id
+    item_with_id["id"] = db.item_id_counter
+    db.items_db[db.item_id_counter] = item_with_id
     return {"message": "Item added successfully", "item": item_with_id}
 
 
 @app.get("/items", tags=[" Items Management"])
 def get_all_items():
-    return {"items": list(items_db.values())}
+    return {"items": list(db.items_db.values())}
 
 
 @app.get("/items/{item_id}", tags=[" Items Management"])
 def get_single_item(item_id: int = Path(..., gt=0)):
-    if item_id not in items_db:
+    if item_id not in db.items_db:
         raise HTTPException(status_code=404, detail="Item not found")
-    return {"item": items_db[item_id]}
+    return {"item": db.items_db[item_id]}
 
 
 @app.put("/items/{item_id}", tags=[" Items Management"])
-def update_item_endpoint(item_id: int, item_update: Item):
-    if item_id not in items_db:
+def update_item_endpoint(item_id: int = Path(..., gt=0), item_update: ItemUpdate = ...):
+    if item_id not in db.items_db:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    existing_item = items_db[item_id]
+    existing_item = db.items_db[item_id]
     updated_data = item_update.model_dump(exclude_unset=True)
     existing_item.update(updated_data)
 
@@ -60,29 +75,29 @@ def update_item_endpoint(item_id: int, item_update: Item):
 
 
 @app.delete("/items/{item_id}", tags=[" Items Management"])
-def remove_item_endpoint(item_id: int):
-    if item_id not in items_db:
+def remove_item_endpoint(item_id: int = Path(..., gt=0)):
+    if item_id not in db.items_db:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    del items_db[item_id]
+    del db.items_db[item_id]
 
-    if item_id in cart_db:
-        del cart_db[item_id]
+    if item_id in db.cart_db:
+        del db.cart_db[item_id]
 
     return {"message": "Item removed successfully"}
 
 
 @app.post("/cart/add", tags=[" Cart Management"])
 def add_item_to_cart_endpoint(cart_item: CartItem):
-    if cart_item.item_id not in items_db:
+    if cart_item.item_id not in db.items_db:
         raise HTTPException(status_code=404, detail="Item not found in store")
 
-    item = items_db[cart_item.item_id]
+    item = db.items_db[cart_item.item_id]
     if item["stock"] < cart_item.quantity:
         raise HTTPException(status_code=400, detail="Insufficient stock")
 
-    current_quantity = cart_db.get(cart_item.item_id, 0)
-    cart_db[cart_item.item_id] = current_quantity + cart_item.quantity
+    current_quantity = db.cart_db.get(cart_item.item_id, 0)
+    db.cart_db[cart_item.item_id] = current_quantity + cart_item.quantity
 
     return {"message": "Item added to cart successfully"}
 
@@ -93,9 +108,9 @@ def get_cart_contents_endpoint():
     total_price = 0
     total_items_count = 0
 
-    for item_id, quantity in cart_db.items():
-        if item_id in items_db:
-            item_details = items_db[item_id]
+    for item_id, quantity in db.cart_db.items():
+        if item_id in db.items_db:
+            item_details = db.items_db[item_id]
             subtotal = item_details["price"] * quantity
             total_price += subtotal
             total_items_count += quantity
@@ -116,34 +131,32 @@ def get_cart_contents_endpoint():
 
 
 @app.delete("/cart/items/{item_id}", tags=[" Cart Management"])
-def remove_item_from_cart_endpoint(item_id: int, quantity: int = Query(..., gt=0)):
-    if item_id not in cart_db:
+def remove_item_from_cart_endpoint(item_id: int = Path(..., gt=0), quantity: int = Query(..., gt=0)):
+    if item_id not in db.cart_db:
         raise HTTPException(status_code=404, detail="Item not in cart")
 
-    current_quantity_in_cart = cart_db[item_id]
+    current_quantity_in_cart = db.cart_db[item_id]
 
     if quantity > current_quantity_in_cart:
         raise HTTPException(status_code=400, detail="Cannot remove more items than are in the cart")
 
     if quantity == current_quantity_in_cart:
-        del cart_db[item_id]
+        del db.cart_db[item_id]
         return {"message": "Item fully removed from cart successfully"}
 
     else:
-        cart_db[item_id] -= quantity
+        db.cart_db[item_id] -= quantity
         return {"message": "Item quantity updated in cart successfully"}
 
 
 @app.post("/cart/finalize", tags=[" Cart Management"])
 def finalize_cart_endpoint():
-    global purchase_id_counter
-
-    if not cart_db:
+    if not db.cart_db:
         raise HTTPException(status_code=400, detail="Cart is empty")
 
-    purchase_id_counter += 1
+    db.purchase_id_counter += 1
     new_purchase = {
-        "id": purchase_id_counter,
+        "id": db.purchase_id_counter,
         "items": [],
         "timestamp": str(datetime.datetime.now()),
         "total_price": 0
@@ -151,12 +164,12 @@ def finalize_cart_endpoint():
 
     total_price = 0
 
-    for item_id, quantity in cart_db.items():
-        if item_id not in items_db:
+    for item_id, quantity in db.cart_db.items():
+        if item_id not in db.items_db:
             raise HTTPException(status_code=500,
                                 detail=f"Item with ID {item_id} not found in store, cannot finalize cart.")
 
-        item_details = items_db[item_id]
+        item_details = db.items_db[item_id]
         item_details["stock"] -= quantity
 
         subtotal = item_details["price"] * quantity
@@ -171,8 +184,8 @@ def finalize_cart_endpoint():
 
     new_purchase["total_price"] = total_price
 
-    purchases_db[purchase_id_counter] = new_purchase
+    db.purchases_db[db.purchase_id_counter] = new_purchase
 
-    cart_db.clear()
+    db.cart_db.clear()
 
     return {"message": "Cart finalized successfully", "purchase": new_purchase}
