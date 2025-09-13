@@ -1,0 +1,44 @@
+# Specify the Docker Compose file format version
+version: '3.8'
+
+# Define the services (containers) that make up your application
+services:
+  # The service for your FastAPI application
+  api:
+    # Build the Docker image from the Dockerfile in the current directory (.)
+    build: .
+    # Map port 8000 on the host to port 8000 in the container
+    ports:
+      - "8000:8000"
+    # Mount the current directory on the host to /app in the container
+    # This allows for live code reloading during development
+    volumes:
+      - .:/app
+    # Define environment variables to be passed to the container
+    # These will be used to connect to the database
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/mydatabase
+    # Specify that this service depends on the 'db' service
+    # Docker Compose will start the 'db' service before this one
+    depends_on:
+      - db
+
+  # The service for the PostgreSQL database
+  db:
+    # Use the official PostgreSQL image, version 15, based on Alpine Linux (lightweight)
+    image: postgres:15-alpine
+    # Mount a named volume to persist the database data
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    # Define environment variables for the database configuration
+    # The PostgreSQL image uses these to initialize the database
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=mydatabase
+    # No ports are exposed to the host, as the 'api' service will communicate
+    # with it over the internal Docker network
+
+# Define the named volumes used by the services
+volumes:
+  postgres_data:
